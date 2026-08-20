@@ -1,0 +1,17 @@
+node_modules/
+dist/
+*.log
+.env
+.DS_Store
+Civic-Shield/
+
+# Local server runtime data (created automatically on each machine)
+server/*.sqlite
+server/*.sqlite-shm
+server/*.sqlite-wal
+server/db.json
+server/db.json.*.tmp
+server/uploads/*
+!server/uploads/.gitkeep
+.env
+server/*.sqlite*

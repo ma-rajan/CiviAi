@@ -1,0 +1,33 @@
+export const ISSUE_STATUSES=["submitted","under_review","verified","assigned","in_progress","resolved","closed","rejected","reopened"].map(key=>({key,label:key.replaceAll("_"," ").replace(/\b\w/g,c=>c.toUpperCase())}));
+export const DEPARTMENTS=["Roads & Infrastructure","Waste Management","Water & Sanitation","Electricity","Anti-Corruption & Grievance","Public Safety","Environment","Public Works","General Administration"];
+export const STATUS_TRANSITIONS={submitted:["under_review","rejected"],under_review:["verified","rejected"],verified:["assigned","rejected"],assigned:["in_progress"],in_progress:["resolved"],resolved:["closed","reopened"],reopened:["assigned","in_progress"],closed:[],rejected:["reopened"]};
+export const allowedTransitions=status=>STATUS_TRANSITIONS[status]||[];
+export const ANALYTICS_FILTER_OPTIONS={categories:["road","pothole","garbage_overflow","water","drainage","electric_line","light_pole","transportation","environment","safety","public_property","other"].map(value=>({value,label:value.replaceAll("_"," ").replace(/\b\w/g,c=>c.toUpperCase())})),severities:["critical","high","medium","low"].map(value=>({value,label:value[0].toUpperCase()+value.slice(1)})),priorities:["critical","high","medium","low"].map(value=>({value,label:value[0].toUpperCase()+value.slice(1)})),wards:[],departments:DEPARTMENTS.map(value=>({value,label:value})),statuses:ISSUE_STATUSES};
+async function api(path,options={}){const multipart=options.body instanceof FormData;const response=await fetch(`/api${path}`,{credentials:"include",...options,headers:{...(!multipart?{"Content-Type":"application/json"}:{}),"X-CivicAI-CSRF":"1",...options.headers}});const body=await response.json().catch(()=>({}));if(!response.ok){const e=new Error(body.error?.message||"Request failed.");e.code=body.error?.code;throw e;}return body.data;}
+function severity(priority){return priority>=85?"critical":priority>=70?"high":priority>=45?"medium":"low";}
+function issue(r){return{...r,severity:severity(r.priority||0),reportCount:1,location:r.address||r.location,legitimacy:{score:null,legit:0,fake:0,total:0},aiConfidence:{classification:Math.round((r.aiConfidence||0)*100),severity:Math.round((r.aiConfidence||0)*100),department:Math.round((r.aiConfidence||0)*100)},explanation:r.aiSummary,activity:r.activity||[]};}
+async function reports(query=""){return (await api(`/reports?limit=100${query}`)).map(issue);}
+export async function getAllReports(){return reports();}
+export async function getAdminUsers(){return api("/admin/users");}
+export async function createAdminUser(payload){return api("/admin/users",{method:"POST",body:JSON.stringify(payload)});}
+export async function deleteAdminUser(id){return api(`/admin/users/${encodeURIComponent(id)}`,{method:"DELETE"});}
+export async function deleteReport(id){return api(`/reports/${encodeURIComponent(id)}`,{method:"DELETE"});}
+export async function rejectAndRemoveReport(id){return api(`/reports/${encodeURIComponent(id)}/reject`,{method:"POST",body:JSON.stringify({})});}
+export async function getIssue(id){return issue(await api(`/reports/${encodeURIComponent(id)}`));}
+export async function getIssueActivity(id){return (await getIssue(id)).activity;}
+export async function getDepartmentIssues(department){return reports(`&department=${encodeURIComponent(department)}`);}
+export async function assignDepartment(id,department){return issue(await api(`/reports/${encodeURIComponent(id)}/assign`,{method:"POST",body:JSON.stringify({department})}));}
+export async function updateIssueStatus(id,status){return issue(await api(`/reports/${encodeURIComponent(id)}/status`,{method:"POST",body:JSON.stringify({status,reason:"Status updated by administrator."})}));}
+export async function addInternalNote(id,note){return api(`/reports/${encodeURIComponent(id)}/notes`,{method:"POST",body:JSON.stringify({content:note})});}
+export async function uploadResolutionImage(id,imageDataUrl,note=""){const blob=await(await fetch(imageDataUrl)).blob();const form=new FormData();form.append("evidence",blob,"resolution.jpg");form.append("note",note);return api(`/reports/${encodeURIComponent(id)}/resolution`,{method:"POST",body:form});}
+export async function markIssueResolved(id,_resolvedBy,note=""){return issue(await api(`/reports/${encodeURIComponent(id)}/status`,{method:"POST",body:JSON.stringify({status:"resolved",reason:note||"Issue resolved by administrator."})}));}
+export async function getCityOverview(){const a=await api("/reports-analytics?range=all");return{stats:{totalReports:Number(a.stats.totalReports||0),activeIssues:Number(a.stats.activeIssues||0),criticalIssues:Number(a.stats.criticalIssues||0),inProgress:Number(a.stats.inProgress||0),resolved:Number(a.stats.resolved||0),avgResolutionDays:Number(a.stats.avgResolutionDays||0)},updatedAt:a.updatedAt};}
+// Critical issues are a priority view, not a single-status view. Keep every
+// unresolved critical report visible so newly submitted/escalated items are
+// not hidden until they reach in-progress.
+export async function getCriticalIssues(){return(await reports()).filter(r=>r.priority>=85&&!['resolved','closed','rejected'].includes(r.status));}
+export async function getPriorityQueue(){return(await reports()).filter(r=>!["resolved","closed","rejected"].includes(r.status)).sort((a,b)=>(b.priority||0)-(a.priority||0));}
+export async function getAIInsights(){const analyzed=(await reports()).filter((report)=>report.aiStatus==="complete"&&report.aiSummary&&report.aiSummary.length>=10);return analyzed.slice(0,3).map((report)=>({id:`ai-${report.id}`,title:`AI recommendation · ${report.categoryLabel||report.category}`,body:report.aiSummary,metric:report.aiPriority==null?"Pending priority":`Priority ${report.aiPriority}`,trend:report.aiConfidence==null?"AI analysis":"Confidence ${Math.round(report.aiConfidence*100)}%",period:"Live report analysis",category:report.category}));}
+export async function getLegacyAIInsights(){return getAIInsights();}
+export async function getAnalytics(range="30d",filters={}){const params=new URLSearchParams({range});const names={categories:"category",severities:"severity",priorities:"priority",statuses:"status",departments:"department",wards:"ward"};for(const [key,name] of Object.entries(names)){const value=filters[key]?.[0];if(value)params.set(name,value);}return api(`/reports-analytics?${params}`);}
+export async function searchCityReports(query){if(!query?.trim())return[];return reports(`&search=${encodeURIComponent(query.trim())}`);}
